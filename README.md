@@ -1,3 +1,5 @@
+Please cd ./large_models first.
+
 ## Installation
 
 ```
