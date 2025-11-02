@@ -81,7 +81,7 @@ Please refer to ```trainer.py``` for details. The ```_inner_training_loop``` fun
 
 ## Citation
 
-```bash
+```text
 @article{tan2025harmony,
   title={Harmony in divergence: Towards fast, accurate, and memory-efficient zeroth-order llm fine-tuning},
   author={Tan, Qitao and Liu, Jun and Zhan, Zheng and Ding, Caiwei and Wang, Yanzhi and Ma, Xiaolong and Lee, Jaewoo and Lu, Jin and Yuan, Geng},
