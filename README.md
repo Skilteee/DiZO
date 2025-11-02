@@ -79,6 +79,10 @@ We have provided two additional log files ([DiZO](https://github.com/Skilteee/Di
 
 Please refer to ```trainer.py``` for details. The ```_inner_training_loop``` function is edited, please replace the original training loop with MeZO. For DiZO, to see where we edited, search ```DiZO added```.
 
+## Acknowledgement
+
+Thanks to [MeZO](https://github.com/princeton-nlp/MeZO) (Memory-efficient Zeroth-order Optimization) open source their code with detailed Readme, you may find solution in MeZO's repo if there is any bugs in runing DiZO. 
+
 ## Citation
 
 ```text
