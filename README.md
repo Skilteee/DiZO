@@ -77,7 +77,7 @@ We have provided two additional log files ([DiZO](https://github.com/Skilteee/Di
 
 ## How to incorporate MeZO or DiZO
 
-Please refer to ```trainer.py``` for details. The ```_inner_training_loop``` function is edited, please replace the original training loop with MeZO. For DiZO, to see where we edited, search ```DiZO added```.
+Please refer to ```trainer.py``` for details. The ```_inner_training_loop``` function is edited, please replace the original training loop with the new edited one. For DiZO, to see where we edited, search ```DiZO added```.
 
 ## Acknowledgement
 
