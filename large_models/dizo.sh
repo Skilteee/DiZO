@@ -11,12 +11,14 @@ DEV=${DEV:-500}
 EVAL=${EVAL:-1000}
 STEPS=${STEPS:-20000}
 EVAL_STEPS=${EVAL_STEPS:-500}
-BITS=${BITS:-12}
-SIZE=${SIZE:-0.9}
-RNG=${RNG:-31}
-PRE_GEN=${PRE_GEN:-False}
-HANDLING=${HANDLING:-False}
+
+# new zo parameters in DiZO
 ENHANCED=${ENHANCED:-None}
+INTERVAL=${INTERVAL:-50}
+ZO_EPS_PROJECTION=${ZO_EPS_PROJECTION:-0.1}
+STEP_SIZE_PROJECTION=${STEP_SIZE_PROJECTION:-2.0}
+CLIP_RANGE=${CLIP_RANGE:-0.2}
+
 
 
 MODE=${MODE:-ft}
@@ -66,7 +68,8 @@ python run.py \
     --trainer zo --load_float16 \
     --learning_rate $LR --zo_eps $EPS --per_device_train_batch_size $BS --lr_scheduler_type "constant" \
     --load_best_model_at_end --evaluation_strategy steps --save_strategy steps --save_total_limit 1 \
-    --eval_steps $EVAL_STEPS --save_steps $EVAL_STEPS --enhanced $ENHANCED\
+    --eval_steps $EVAL_STEPS --save_steps $EVAL_STEPS \
+    --enhanced $ENHANCED --interval $INTERVAL --zo_eps_projection $ZO_EPS_PROJECTION --step_size_projection $STEP_SIZE_PROJECTION --clip_range $CLIP_RANGE\
     --train_as_classification \
     $EXTRA_ARGS \
     $TASK_ARGS \

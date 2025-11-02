@@ -68,12 +68,6 @@ class OurArguments(TrainingArguments):
 
     # MeZO
     zo_eps: float = 1e-3  # eps in MeZO
-    bits: int = 11
-    rng: int = 8
-    pre_gen: bool = False
-    handling: bool = False
-    size: float = 0.9
-    enhanced: str = None
 
     # Prefix tuning
     prefix_tuning: bool = False  # whether to use prefix tuning
@@ -116,6 +110,14 @@ class OurArguments(TrainingArguments):
 
     # Auto saving when interrupted
     save_on_interrupt: bool = False  # save model when interrupted (useful for long training)
+
+    # newly added in DiZO
+    enhanced: str = None
+    interval: int = 50
+    zo_eps_projection: float = 0.1
+    step_size_projection: float = 2.0
+    clip_range: float = 0.2
+
 
 
 def parse_args():

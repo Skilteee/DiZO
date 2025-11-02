@@ -43,10 +43,8 @@ from collections import deque
 
 # Integrations must be imported before ML frameworks:
 from transformers.integrations import (  # isort: split
-    default_hp_search_backend,
     get_reporting_integration_callbacks,
     hp_params,
-    is_fairscale_available,
     is_optuna_available,
     is_ray_tune_available,
     is_sigopt_available,
@@ -72,14 +70,24 @@ from transformers import __version__
 from transformers.configuration_utils import PretrainedConfig
 from transformers.data.data_collator import DataCollator, DataCollatorWithPadding, default_data_collator
 from transformers.debug_utils import DebugOption, DebugUnderflowOverflow
+from transformers.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
 from transformers.dependency_versions_check import dep_version_check
 from transformers.modelcard import TrainingSummary
 from transformers.modeling_utils import PreTrainedModel, load_sharded_checkpoint, unwrap_model
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES, MODEL_MAPPING_NAMES
 from transformers.optimization import Adafactor, get_scheduler
-from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS, is_torch_greater_or_equal_than_1_10, \
-    is_torch_less_than_1_11
+# from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS, is_torch_greater_or_equal_than_1_10, \
+#     is_torch_less_than_1_11
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers.trainer_callback import (
+    CallbackHandler,
+    DefaultFlowCallback,
+    PrinterCallback,
+    ProgressCallback,
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
+)
 from transformers.trainer_pt_utils import (
     DistributedLengthGroupedSampler,
     DistributedSamplerWithLoop,
@@ -101,32 +109,30 @@ from transformers.trainer_pt_utils import (
     nested_xla_mesh_reduce,
     reissue_pt_warnings,
 )
-# from transformers.trainer_utils import (
-#     PREFIX_CHECKPOINT_DIR,
-#     BestRun,
-#     EvalLoopOutput,
-#     EvalPrediction,
-#     FSDPOption,
-#     HPSearchBackend,
-#     HubStrategy,
-#     IntervalStrategy,
-#     PredictionOutput,
-#     RemoveColumnsCollator,
-#     ShardedDDPOption,
-#     TrainerMemoryTracker,
-#     TrainOutput,
-#     default_compute_objective,
-#     default_hp_space,
-#     denumpify_detensorize,
-#     enable_full_determinism,
-#     find_executable_batch_size,
-#     get_last_checkpoint,
-#     has_length,
-#     number_of_arguments,
-#     seed_worker,
-#     set_seed,
-#     speed_metrics,
-# )
+from transformers.trainer_utils import (
+    PREFIX_CHECKPOINT_DIR,
+    BestRun,
+    EvalLoopOutput,
+    EvalPrediction,
+    FSDPOption,
+    HPSearchBackend,
+    HubStrategy,
+    IntervalStrategy,
+    PredictionOutput,
+    RemoveColumnsCollator,
+    TrainerMemoryTracker,
+    TrainOutput,
+    default_compute_objective,
+    denumpify_detensorize,
+    enable_full_determinism,
+    find_executable_batch_size,
+    get_last_checkpoint,
+    has_length,
+    number_of_arguments,
+    seed_worker,
+    set_seed,
+    speed_metrics,
+)
 from transformers.training_args import OptimizerNames, ParallelMode, TrainingArguments
 from transformers.utils import (
     CONFIG_NAME,
@@ -152,10 +158,8 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from torch.nn import CrossEntropyLoss
 from torch.optim.lr_scheduler import LambdaLR
 
-_is_native_cpu_amp_available = is_torch_greater_or_equal_than_1_10
+# _is_native_cpu_amp_available = is_torch_greater_or_equal_than_1_10
 
-DEFAULT_CALLBACKS = [DefaultFlowCallback]
-DEFAULT_PROGRESS_CALLBACK = ProgressCallback
 
 if is_in_notebook():
     from .utils.notebook import NotebookProgressCallback
@@ -174,14 +178,14 @@ if is_torch_tpu_available(check_device=False):
     import torch_xla.debug.metrics as met
     import torch_xla.distributed.parallel_loader as pl
 
-if is_fairscale_available():
-    dep_version_check("fairscale")
-    import fairscale
-    from fairscale.nn.data_parallel import FullyShardedDataParallel as FullyShardedDDP
-    from fairscale.nn.data_parallel import ShardedDataParallel as ShardedDDP
-    from fairscale.nn.wrap import auto_wrap
-    from fairscale.optim import OSS
-    from fairscale.optim.grad_scaler import ShardedGradScaler
+# if is_fairscale_available():
+#     dep_version_check("fairscale")
+#     import fairscale
+#     from fairscale.nn.data_parallel import FullyShardedDataParallel as FullyShardedDDP
+#     from fairscale.nn.data_parallel import ShardedDataParallel as ShardedDDP
+#     from fairscale.nn.wrap import auto_wrap
+#     from fairscale.optim import OSS
+#     from fairscale.optim.grad_scaler import ShardedGradScaler
 from utils import encode_prompt, Prediction
 
 if is_sagemaker_mp_enabled():
@@ -196,7 +200,7 @@ else:
 
 if TYPE_CHECKING:
     import optuna
-
+import numpy as np
 from torch.profiler import profile, ProfilerActivity, tensorboard_trace_handler
 
 logger = logging.get_logger(__name__)
@@ -215,155 +219,7 @@ from collections import defaultdict
 from torchprofile import profile_macs
 
 
-class RNG:
-    def __init__(self, bits):
-        self.seed = 0
-        self.bits = bits
-        self.idx = 0
-        self.random_numbers = list(range(-2 ** (bits - 1), 2 ** (bits - 1)))
-        random.shuffle(self.random_numbers)
-
-    def step(self):
-        number = self.random_numbers[self.idx]
-        self.idx = (self.idx + 1) % len(self.random_numbers)
-        return number
-
-
-class RNGs:
-    def __init__(self, bits, num_RNGs):
-        self.bits = bits
-        self.num_RNGs = num_RNGs
-        self.rngs = [RNG(bits) for _ in range(num_RNGs)]
-        self.idx = 0
-        self.reverse_idx = 0
-        self.get_norm()
-
-    def get_norm(self):
-        self.norm = {}
-        for i in range(2 ** self.bits):
-            rns = [rng.step() for rng in self.rngs]
-            self.norm[rns[0]] = sum([rn ** 2 for rn in rns]) ** 0.5
-        self.idx = 0
-
-    def step(self):
-        if self.idx % (2 ** self.bits - 1) == 0 and self.idx != 0:
-            self.rngs.append(self.rngs.pop(0))
-
-        self.idx += 1
-        if (self.idx - 1) % (2 ** self.bits - 1) == 0 and self.idx != 1:
-            self.reverse_idx = -((abs(self.reverse_idx) + 1) % self.num_RNGs)
-
-        return [rng.step() for rng in self.rngs]
-
-def direction_de(W):
-    norm_W_c = torch.norm(W, dim=0, keepdim=True)
-
-    V = W / norm_W_c
-
-    m = norm_W_c
-
-    return V, m
-
-
-
-
-def DorefaW(w, bit, percent=0.01):
-
-    scaling = True  # whether to use scaling factor, always true in our case
-    if bit == 1:
-        weight = w.detach()
-        # sign = torch.sign(weight)
-        scale = torch.max(torch.abs(weight))
-        quantized = torch.sign(weight).float()
-        residual = quantized - weight
-        if scaling:
-            w = (w + residual) * scale
-        else:
-            w = w + residual
-
-    elif bit == 2:
-        weight = w.detach()
-        sign = torch.sign(weight)
-        scale = torch.max(torch.abs(weight))
-        quantized = (torch.abs(weight) > scale / 3).float()
-        quantized *= sign
-        residual = quantized - weight
-        if scaling:
-            w = (w + residual) * scale
-        else:
-            w = w + residual
-    else:
-        sign = torch.sign(w)
-        scale = torch.max(torch.abs(w))
-        w = torch.abs(w) / (scale + 1e-9)
-        w = QuantizeW.apply(w, bit, 'fp')
-
-        w = w * scale * sign
-
-    return w
-
-class QuantizeW(Function):
-    @staticmethod
-    def forward(ctx, input, bit, scheme='fp'):
-        ctx.bit = bit
-        # I. fix point:
-        if scheme == 'fp':
-            scale = float(2 ** bit - 1)
-            out = torch.round(input * scale) / scale
-
-        # II. power of 2:
-        elif scheme == 'po2':
-            out = 2 ** torch.round(torch.log2(input)) * (input > 2 ** (-2 ** bit + 1)).float()
-
-        # III. sp2:
-        elif scheme == 'sp2':
-            size = input.size()
-            y = input.reshape(-1)
-
-            centroids = torch.tensor(
-                [0, 2 ** -4, 2 ** -3, 2 ** -4 + 2 ** -3, 2 ** -2, 2 ** -2 + 2 ** -3, 2 ** -1, 2 ** -1 + 2 ** -3,
-                 1]).cuda()
-            mag = y - centroids.reshape(-1, 1)
-
-            minimum = torch.min(torch.abs(mag), dim=0)[1]
-            out = centroids[minimum]
-            out = out.reshape(size)
-        else:
-            raise NotImplementedError
-        return out
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        bit = ctx.bit
-        # bit = 8 - 1
-
-        sign = torch.sign(grad_output)
-        scaling = torch.max(torch.abs(grad_output))
-        gradient = torch.abs(grad_output) / scaling
-
-        scale = float(2 ** bit - 1)
-        near = False
-        if near:  # nearest rounding
-            grad_input = torch.round(gradient * scale) / scale
-        else:  # stochastic rounding
-            """
-            #randtensor = torch.rand(gradient.shape).to(gradient.device) - 0.5  # random tensor in [-0.5,0.5)  (too slow)
-            randtensor = torch.cuda.FloatTensor(gradient.shape).uniform_(-0.5, 0.5).to(gradient.device) # random tensor in [-0.5,0.5)
-            grad_input = torch.round((gradient * scale) + randtensor) / scale
-            # e.g. gradient * scale = 3.3, add random value in [-0.5,0.5)
-            # if random value is in   0.2~0.5 -> 4 (30%)
-            # else                   -0.5~0.2 -> 3 (70%)
-            """
-            # random rounding
-            randtensor = torch.cuda.FloatTensor(gradient.shape).uniform_(0, 1).to(gradient.device)
-            randtensor = torch.round(randtensor) - 0.5  # only have 50% 0.5 and 50% -0.5
-            grad_input = torch.round((gradient * scale) + randtensor) / scale
-            # e.g. gradient * scale = 3.3, add random value (0.5 or -0.5)
-            # if random value is 0.5, 3.3+0.5 = 3.8 -> 4 (50%)
-            # else              -0.5, 3.3-0.5 = 2.8 -> 3 (50%)
-
-        return grad_input * sign * scaling, None, None
-# 
+# DiZO added
 class DiZO(nn.Module):
     def __init__(self, model, norm_mode, exclude_list=[]) -> None:
         super().__init__()
@@ -550,7 +406,11 @@ class DiZO(nn.Module):
 
         return zs
 
-    def zo_forward(self, new=None, pre_trained=None, x=None, apply=False):
+    def zo_forward(self, new=None, pre_trained=None, x=None, apply=False, args=None):
+
+        tau = args.clip_range
+        zo_eps = args.zo_eps_projection
+        step_size = args.step_size_projection
 
         if apply:
             constraint_iterator = iter(self.constraints)
@@ -576,10 +436,6 @@ class DiZO(nn.Module):
                     for i, (name, gamma) in enumerate(self.constraints.named_parameters()):
                         gamma.data = ts[i]
 
-                tau = 0.2
-                zo_eps = 0.1
-                step_size = 2
-
                 zs = self.perturb_gamma(1, ts=ts, tau=tau, zo_eps=zo_eps)
                 constraint_iterator = iter(self.constraints)
                 self.apply_constraints(new, pre_trained, constraint_iterator)
@@ -601,71 +457,6 @@ class DiZO(nn.Module):
                     gamma.data = torch.clip(gamma.data - step_size * ts[i] * grad * tmp_z, (1 - tau) * ts[i], (1 + tau) * ts[i])
 
             self.ts = ts
-
-    # def zo_forward(self, new=None, pre_trained=None, x=None, apply=False):
-    #
-    #     if apply:
-    #         constraint_iterator = iter(self.constraints)
-    #         self.apply_constraints(
-    #             new,
-    #             pre_trained,
-    #             constraint_iterator,
-    #             apply=apply,
-    #         )
-    #     else:
-    #         copy_model = copy.deepcopy(new)
-    #         copy_model.eval()
-    #         zs = {}
-    #         ts = []
-    #
-    #         with torch.no_grad():
-    #
-    #             for (name, para), anchor in zip(copy_model.named_parameters(), pre_trained.parameters()):
-    #                 if name not in self.exclude_list:
-    #                     norm = torch.norm(para.data - anchor.data)
-    #                     ts.append(norm)
-    #
-    #             # parameters_dict = {name: param.item() for name, param in self.constraints.named_parameters()}
-    #             loss0 = self.forward_wrap_with_option_len(copy_model, **x, return_dict=True).loss
-    #             # + 1e-3 * sum(p.abs().sum() for p in self.constraints.parameters())
-    #
-    #             scale = 0.1
-    #             scale_v = 1
-    #             scale_other = 0.3
-    #             if self.init:
-    #                 for i, (name, para) in enumerate(self.constraints.named_parameters()):
-    #                     if 'self_attn.v_proj' in self.id_name_map[i]:
-    #                         para.data = ts[i] * scale_v
-    #                     else:
-    #                         para.data = ts[i] * scale_other
-    #                         # para.data = torch.normal(0, ts[i] * scale_other, size=(1,)).to(para.device)
-    #                     zs[name] = 0
-    #             else:
-    #                 for i, (name, para) in enumerate(self.constraints.named_parameters()):
-    #                     if 'self_attn.v_proj' in self.id_name_map[i]:
-    #                         z = torch.normal(0, ts[i] * scale_v, size=(1,)).to(para.device)
-    #                         para.data = para.data + scale * z
-    #                     else:
-    #                         z = torch.normal(0, ts[i] * scale_other, size=(1,)).to(para.device)
-    #                         # para.data = para.data + scale * z
-    #                         para.data = torch.clip(para.data + scale * z, -scale_other * ts[i], scale_other * ts[i])
-    #                     zs[name] = z.item()
-    #
-    #             constraint_iterator = iter(self.constraints)
-    #             self.apply_constraints(copy_model, pre_trained, constraint_iterator)
-    #             loss1 = self.forward_wrap_with_option_len(copy_model, **x, return_dict=True).loss
-    #             # + 1e-3 * sum(p.abs().sum() for p in self.constraints.parameters())
-    #             # + 5e-4 * sum(p.abs().sum() for p in self.constraints.parameters())
-    #
-    #
-    #             if loss0 < loss1:
-    #                 for i, (name, para) in enumerate(self.constraints.named_parameters()):
-    #                     para.data = para.data - 2 * scale * zs[name]
-
-    @staticmethod
-    def initialize_population(num_layers, population_size):
-        population = torch.empty((population_size, num_layers)).uniform_(-0.1, 0.1)
-        return population
 
     def apply_projections(self, copy_model, pre_trained, projections):
 
@@ -729,7 +520,7 @@ class DiZO(nn.Module):
 
             return pgm_loss
 
-# 
+# DiZO added
 class dizo_trainer():
     def __init__(
             self,
@@ -768,7 +559,7 @@ class dizo_trainer():
 
         self.dizo(model, self.pre_trained, apply=True)
 
-    def dizo_zo_iters(self, model, base_model, apply=False):
+    def dizo_zo_iters(self, model, base_model, apply=False, args=None):
         if not apply:
             self.count = 0
             self.dizo = self.dizo.to(self.device)
@@ -784,11 +575,11 @@ class dizo_trainer():
                 for each in data:
                     data[each] = data[each].to(self.device)
 
-                self.dizo.zo_forward(model, base_model, x=data)
+                self.dizo.zo_forward(model, base_model, x=data, args=args)
                 self.dizo.init = False
                 self.count += 1
 
-        self.dizo.zo_forward(model, self.pre_trained, apply=True)
+        self.dizo.zo_forward(model, self.pre_trained, apply=True, args=args)
         self.i += 1
 
     def dizo_iters(self, model, base_model, apply=False):
@@ -961,7 +752,7 @@ class OurTrainer(Trainer):
 
         delay_optimizer_creation = (
                 self.sharded_ddp is not None
-                and self.sharded_ddp != ShardedDDPOption.SIMPLE
+                # and self.sharded_ddp != ShardedDDPOption.SIMPLE
                 or is_sagemaker_mp_enabled()
                 or self.fsdp is not None
         )
@@ -1052,9 +843,9 @@ class OurTrainer(Trainer):
         self.callback_handler.model = self.model
         self.callback_handler.optimizer = self.optimizer
         self.callback_handler.lr_scheduler = self.lr_scheduler
-        if args.trainer == 'zo':
-            lr_lambda = lambda step: 1 - self.state.global_step / (2 * args.max_steps)
-            self.lr_scheduler = LambdaLR(self.optimizer, lr_lambda)
+        # if args.trainer == 'zo':
+        #     lr_lambda = lambda step: 1 - self.state.global_step / (2 * args.max_steps)
+        #     self.lr_scheduler = LambdaLR(self.optimizer, lr_lambda)
         self.callback_handler.train_dataloader = train_dataloader
         if self.hp_name is not None and self._trial is not None:
             # use self._trial because the SigOpt/Optuna hpo only call `_hp_search_setup(trial)` instead of passing trial
@@ -1089,15 +880,15 @@ class OurTrainer(Trainer):
                 is_random_sampler = hasattr(train_dataloader, "sampler") and isinstance(
                     train_dataloader.sampler, RandomSampler
                 )
-                if is_torch_less_than_1_11 or not is_random_sampler:
-                    # We just need to begin an iteration to create the randomization of the sampler.
-                    # That was before PyTorch 1.11 however...
-                    for _ in train_dataloader:
-                        break
-                else:
-                    # Otherwise we need to call the whooooole sampler cause there is some random operation added
-                    # AT THE VERY END!
-                    _ = list(train_dataloader.sampler)
+                # if is_torch_less_than_1_11 or not is_random_sampler:
+                #     # We just need to begin an iteration to create the randomization of the sampler.
+                #     # That was before PyTorch 1.11 however...
+                #     for _ in train_dataloader:
+                #         break
+                # else:
+                #     # Otherwise we need to call the whooooole sampler cause there is some random operation added
+                #     # AT THE VERY END!
+                _ = list(train_dataloader.sampler)
 
         # What parameters to optimize
         self.named_parameters_to_optim = []
@@ -1105,7 +896,7 @@ class OurTrainer(Trainer):
             if param.requires_grad:
                 self.named_parameters_to_optim.append((name, param))
 
-        # : exclude the layers do not need projection
+        # DiZO added: exclude the layers do not need projection
         if self.named_parameters_to_optim[0][0] != 'model.decoder.embed_tokens.weight':
             self.exclude_list = [each for each in list(self.model.state_dict().keys()) if 'lora' not in each]
         else:
@@ -1114,12 +905,12 @@ class OurTrainer(Trainer):
                                                                          'self_attn.v_proj.weight' not in name and 'self_attn.k_proj.weight' not in name]
             self.named_parameters_to_optim = self.named_parameters_to_optim[1:]
 
-        # : remove the unnecessary parameters to cpu for memory saving
+        # DiZO added: remove the unnecessary parameters to cpu for memory saving
+        self.base_model = copy.deepcopy(self.model)
+        for name, param in self.base_model.named_parameters():
+            if name in self.exclude_list:
+                param.data = param.data.to('cpu')
         if args.enhanced in ['zo', 'fo']:
-            self.base_model = copy.deepcopy(self.model)
-            for name, param in self.base_model.named_parameters():
-                if name in self.exclude_list:
-                    param.data = param.data.to('cpu')
             self.dizo_trainer = dizo_trainer(self.base_model, train_dataloader, 'l2norm', 0.1, 10, self.exclude_list)
 
         else:
@@ -1129,6 +920,13 @@ class OurTrainer(Trainer):
         self.random_vector = {}
 
         self.accuracy = []
+
+        self.etas = {}
+        self.extra_iter = 0
+
+        # self.interval = np.linspace(150, 25, 2000)
+        self.interval = 50
+
 
         for epoch in range(epochs_trained, num_train_epochs):
 
@@ -1156,6 +954,18 @@ class OurTrainer(Trainer):
 
             if epoch == epochs_trained and resume_from_checkpoint is not None and steps_trained_in_current_epoch == 0:
                 self._load_rng_state(resume_from_checkpoint)
+
+            # idxs = [3 + 16 * 26, 5 + 16 * 7, 3 + 16 * 6, 3 + 16 * 3]
+            # for k in range(len(idxs)):
+            #     idx = idxs[k]
+            #     name = self.named_parameters_to_optim[idx][0]
+            #     norm = (self.named_parameters_to_optim[idx][1].data - self.base_model.state_dict()[
+            #         name].cuda().data).norm()
+            #     norms[k].append(norm.item())
+            #
+            # temp_norms = np.array(norms)
+            # print(temp_norms[:, -1])
+            # np.save('zo_norms_mezo.npy', temp_norms)
 
 
             for step, inputs in enumerate(epoch_iterator):
@@ -1187,12 +997,12 @@ class OurTrainer(Trainer):
                     ):
                         # Avoid unnecessary DDP synchronization since there will be no backward pass on this example.
                         with model.no_sync():
-                            tr_loss_step = self.forward_wrap_with_option_len(model, **inputs, return_dict=True).loss
-                            # tr_loss_step = self.training_step(model, inputs)
+                            # tr_loss_step = self.forward_wrap_with_option_len(model, **inputs, return_dict=True).loss
+                            tr_loss_step = self.training_step(model, inputs)
                     else:
-                        inputs = self._prepare_inputs(inputs)
-                        tr_loss_step = self.forward_wrap_with_option_len(model, **inputs, return_dict=True).loss
-                        # tr_loss_step = self.training_step(model, inputs)
+                        # inputs = self._prepare_inputs(inputs)
+                        # tr_loss_step = self.forward_wrap_with_option_len(model, **inputs, return_dict=True).loss
+                        tr_loss_step = self.training_step(model, inputs)
 
                 if (
                         args.logging_nan_inf_filter
@@ -1217,7 +1027,7 @@ class OurTrainer(Trainer):
                 ):
                     # MeZO added: update model with the estimated gradient
                     if args.trainer == "zo":
-                        self.zo_update(args, model)
+                        self.zo_update(args, model, inputs)
                     else:
                         # Gradient clipping
                         if args.max_grad_norm is not None and args.max_grad_norm > 0 and not self.deepspeed:
@@ -1276,10 +1086,10 @@ class OurTrainer(Trainer):
                     log_step = 50 if args.trainer == 'zo' else 10
                     if self.state.global_step % log_step == 0:
                         logger.info(
-                            {'loss': round(tr_loss_step.item(), 4), 'epoch': epoch, 'lr': self._get_learning_rate()})
+                            {'loss': round(np.mean(self.loss_list[-10:]), 4), 'epoch': epoch, 'lr': self._get_learning_rate()})
 
                     self.loss_list.append(tr_loss_step.item())
-                    self.args.eval_steps = 100
+                    self.args.eval_steps = 200
 
                     if self.state.global_step % self.args.eval_steps == 0:
 
@@ -1296,12 +1106,12 @@ class OurTrainer(Trainer):
                         metrics = {metric_name: calculate_metric(predictions, metric_name)}
                         metrics["global_step"] = self.state.global_step
                         logger.info(f"Eval results: {metrics}")
-                        self.accuracy.append(metrics['accuracy'])
+                        self.accuracy.append(metrics[metric_name])
                         np.save(path + '/' + 'accuracy_seed_{}.npy'.format(args.seed), self.accuracy)
 
-                        if metrics['accuracy'] >= self.objective:
-                            logger.info("Best dev result: {}".format(metrics['accuracy']))
-                            self.objective = metrics['accuracy']
+                        if metrics[metric_name] >= self.objective:
+                            logger.info("Best dev result: {}".format(metrics[metric_name]))
+                            self.objective = metrics[metric_name]
                             # self.save_model(self.args.output_dir)
 
                             # Now we save this to (CPU) memory instead of disk <-- much faster
@@ -1549,7 +1359,37 @@ class OurTrainer(Trainer):
 
         return loss1
 
-    def zo_update(self, args, model):
+    def backtracking_line_search(self, param, model, z, inputs, eta_init=1.0, alpha=5e-7, beta=0.1, max_iter=5, direction=None):
+
+        raw_param = copy.deepcopy(param.data)
+
+        eta = eta_init
+        g_est = self.projected_grad * z
+        f_curr = self.zo_forward(model, inputs)
+
+        # Default: move against gradient estimate
+        if direction is None:
+            direction = -g_est
+
+        dot = torch.dot(g_est.flatten().float(), direction.flatten().float())
+
+        local_iter = None
+
+        for iter1 in range(max_iter):
+            param.data = param.data + eta * direction
+            new_loss = self.zo_forward(model, inputs)
+            if new_loss <= f_curr + alpha * eta * dot:
+                local_iter = iter1
+                return eta, local_iter
+            eta *= beta
+            local_iter = iter1
+            param.data = raw_param
+
+        param.data = raw_param
+
+        return self._get_learning_rate(), local_iter
+
+    def zo_update(self, args, model, inputs):
         """
         Update the parameters with the estimated gradients.
         """
@@ -1558,16 +1398,21 @@ class OurTrainer(Trainer):
         torch.manual_seed(self.zo_random_seed)
 
         for name, param in self.named_parameters_to_optim:
-            # Resample z
-            z = torch.normal(mean=0, std=1, size=param.data.size(), device=param.data.device, dtype=param.data.dtype)
-            param.data = param.data - self._get_learning_rate() * (self.projected_grad * z)
+            z = torch.normal(mean=0, std=1, size=param.data.size(), device=param.data.device,
+                             dtype=param.data.dtype)
 
-        # 
-        if (self.state.global_step + 1) % 50 == 0 and args.enhanced:
+            update = self.projected_grad * z
+            param.data = param.data - self._get_learning_rate() * update
+
+        # DiZO added
+        if (self.state.global_step + 1) % args.interval == 0 and args.enhanced:
             if args.enhanced == 'zo':
-                self.dizo_trainer.dizo_zo_iters(model, base_model=self.base_model)
+                self.dizo_trainer.dizo_zo_iters(model, base_model=self.base_model, args=args)
             else:
                 self.dizo_trainer.dizo_iters(model, base_model=self.base_model)
+
+        # if (self.state.global_step + 1) % 500 == 0:
+        #     self.base_model = copy.deepcopy(self.model)
 
         self.lr_scheduler.step()
 
@@ -1605,9 +1450,9 @@ class OurTrainer(Trainer):
                 # 'user_content.pt' indicates model state_dict saved with smp >= 1.10
                 Path(os.path.join(output_dir, "user_content.pt")).touch()
         elif (
-                ShardedDDPOption.ZERO_DP_2 in self.args.sharded_ddp
-                or ShardedDDPOption.ZERO_DP_3 in self.args.sharded_ddp
-                or self.fsdp is not None
+                # ShardedDDPOption.ZERO_DP_2 in self.args.sharded_ddp
+                # or ShardedDDPOption.ZERO_DP_3 in self.args.sharded_ddp
+                self.fsdp is not None
         ):
             from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, StateDictType, FullStateDictConfig
             full_state_dict_config = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
@@ -1661,17 +1506,32 @@ class OurTrainer(Trainer):
         """
         input_ids = torch.tensor([input_ids]).to(self.model.device)
 
-        with torch.inference_mode():
-            self.model.eval()
-            logits = self.model(input_ids=input_ids).logits
-        labels = input_ids[0, 1:]
-        logits = logits[0, :-1]
-        log_probs = F.log_softmax(logits, dim=-1)
+        if generation:
+            args = self.args
+            # Autoregressive generation
+            outputs = self.model.generate(
+                input_ids, do_sample=args.sampling, temperature=args.temperature,
+                num_beams=args.num_beams, top_p=args.top_p, top_k=args.top_k,
+                max_new_tokens=min(args.max_new_tokens, args.max_length - input_ids.size(1)),
+                num_return_sequences=1,
+                eos_token_id=[self.tokenizer.encode(args.eos_token, add_special_tokens=False)[-1],
+                              self.tokenizer.eos_token_id],
+            )
+            # For generation, directly return the text output
+            output_text = self.tokenizer.decode(outputs[0][input_ids.size(1):], skip_special_tokens=True).strip()
+            return output_text
+        else:
+            with torch.inference_mode():
+                self.model.eval()
+                logits = self.model(input_ids=input_ids).logits
+            labels = input_ids[0, 1:]
+            logits = logits[0, :-1]
+            log_probs = F.log_softmax(logits, dim=-1)
 
-        selected_log_probs = log_probs[torch.arange(len(labels)).to(labels.device), labels]
-        selected_log_probs = selected_log_probs.cpu().detach()
-        # Only return the option (candidate) part
-        return selected_log_probs[-option_len:]
+            selected_log_probs = log_probs[torch.arange(len(labels)).to(labels.device), labels]
+            selected_log_probs = selected_log_probs.cpu().detach()
+            # Only return the option (candidate) part
+            return selected_log_probs[-option_len:]
 
     def one_step_pred(self, train_samples, eval_sample, verbose=False):
         """
@@ -1690,34 +1550,66 @@ class OurTrainer(Trainer):
             generation=self.task.generation, max_new_tokens=self.args.max_new_tokens
         )
 
+        # Calibration
+        if self.args.sfc or self.args.icl_sfc:
+            sfc_encoded_candidates, sfc_option_lens = encode_prompt(self.task, self.task.get_template(),
+                                                                    train_samples, eval_sample, self.tokenizer,
+                                                                    max_length=self.args.max_length,
+                                                                    sfc=self.args.sfc, icl_sfc=self.args.icl_sfc,
+                                                                    generation=self.task.generation,
+                                                                    max_new_tokens=self.args.max_new_tokens
+                                                                    )
+
         outputs = []
-
-        # For classification/multiple-choice, calculate the probabilities of all candidates
-        for candidate_id, encoded_candidate in enumerate(encoded_candidates):
-            selected_log_probs = self.forward(encoded_candidate, option_len=option_lens[candidate_id])
+        if self.task.generation:
+            # For generation tasks, return the autoregressively-generated text
+            output_text = self.forward(encoded_candidates[0], generation=True)
             if verbose:
-                if candidate_id == 0:
-                    logger.info("=== Candidate %d ===" % candidate_id)
-                    logger.info(self.tokenizer.decode(encoded_candidate))
-                else:
-                    logger.info("=== Candidate %d (without context)===" % candidate_id)
-                    logger.info(self.tokenizer.decode(encoded_candidate).split(self.task.train_sep)[-1])
-                logger.info(f"Log probabilities of the option tokens: {selected_log_probs}")
-
-            outputs.append({"log_probs": selected_log_probs,
-                            "sfc_log_probs": None})
-
-        scores = [x['log_probs'].mean().item() for x in outputs]
-
-        if verbose:
-            logger.info(f"Prediction scores: {scores}")
-
-        if isinstance(eval_sample.correct_candidate, list):
-            # For some datasets there are multiple correct answers
-            correct_candidate_id = [eval_sample.candidates.index(c) for c in eval_sample.correct_candidate]
+                logger.info("=== Prompt ===")
+                logger.info(self.tokenizer.decode(encoded_candidates[0]))
+                logger.info(f"Output: {output_text}")
+            return Prediction(correct_candidate=eval_sample.correct_candidate, predicted_candidate=output_text)
         else:
-            correct_candidate_id = eval_sample.candidates.index(eval_sample.correct_candidate)
+            # For classification/multiple-choice, calculate the probabilities of all candidates
+            for candidate_id, encoded_candidate in enumerate(encoded_candidates):
+                selected_log_probs = self.forward(encoded_candidate, option_len=option_lens[candidate_id])
+                if verbose:
+                    if candidate_id == 0:
+                        logger.info("=== Candidate %d ===" % candidate_id)
+                        logger.info(self.tokenizer.decode(encoded_candidate))
+                    else:
+                        logger.info("=== Candidate %d (without context)===" % candidate_id)
+                        logger.info(self.tokenizer.decode(encoded_candidate).split(self.task.train_sep)[-1])
+                    logger.info(f"Log probabilities of the option tokens: {selected_log_probs}")
 
-        return Prediction(correct_candidate=correct_candidate_id, predicted_candidate=int(np.argmax(scores)))
+                if self.args.sfc or self.args.icl_sfc:
+                    sfc_selected_log_probs = self.forward(sfc_encoded_candidates[candidate_id],
+                                                          option_len=sfc_option_lens[candidate_id])
+                    if verbose:
+                        logger.info("=== Candidate %d (without context) SFC ===" % candidate_id)
+                        logger.info(
+                            self.tokenizer.decode(sfc_encoded_candidates[candidate_id]).split(self.task.train_sep)[-1])
+                        logger.info(f"Log probabilities of the option tokens: {sfc_selected_log_probs}")
 
+                outputs.append({"log_probs": selected_log_probs,
+                                "sfc_log_probs": sfc_selected_log_probs if self.args.sfc or self.args.icl_sfc else None})
 
+            if self.args.sfc or self.args.icl_sfc:
+                # Calibrated probabilities (surface form competition; https://arxiv.org/pdf/2104.08315.pdf)
+                # log p(candidate | input) = log p_lm(candidate | input) - log p_lm(candidate | sfc prompt)
+                scores = [x['log_probs'].sum().item() - x['sfc_log_probs'].sum().item() for x in outputs]
+            else:
+                # (Default) length-normalized log probabilities
+                # log p(candidate | input) = log p_lm(candidate | input) / |candidate #tokens|
+                scores = [x['log_probs'].mean().item() for x in outputs]
+
+            if verbose:
+                logger.info(f"Prediction scores: {scores}")
+
+            if isinstance(eval_sample.correct_candidate, list):
+                # For some datasets there are multiple correct answers
+                correct_candidate_id = [eval_sample.candidates.index(c) for c in eval_sample.correct_candidate]
+            else:
+                correct_candidate_id = eval_sample.candidates.index(eval_sample.correct_candidate)
+
+            return Prediction(correct_candidate=correct_candidate_id, predicted_candidate=int(np.argmax(scores)))
