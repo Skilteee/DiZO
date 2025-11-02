@@ -58,7 +58,7 @@ We provide example scripts below for reproducing our experiments.
 MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 bash dizo.sh
 
 # use zeroth-order optimization for $\gamma$ projection searching
-CUDA_VISIBLE_DEVICES=1 MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=zo ZO_EPS_PROJECTION=0.1 STEP_SIZE_PROJECTION=2.0 CLIP_RANGE=0.2 bash dizo.sh
+MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=zo ZO_EPS_PROJECTION=0.1 STEP_SIZE_PROJECTION=2.0 CLIP_RANGE=0.2 bash dizo.sh
 
 # use first-order optimization for $\gamma$ projection searching
 MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=fo INTERVAL=50 bash dizo.sh
