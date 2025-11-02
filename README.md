@@ -57,9 +57,9 @@ We provide example scripts below for reproducing our experiments.
 # do not involve $\gamma$ (original MeZO)
 MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 bash dizo.sh
 # use zeroth-order optimization for $\gamma$ projection searching
-MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=zo bash dizo.sh
+CUDA_VISIBLE_DEVICES=1 MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=zo ZO_EPS_PROJECTION=0.1 STEP_SIZE_PROJECTION=2.0 CLIP_RANGE=0.2 bash dizo.sh
 # use first-order optimization for $\gamma$ projection searching
-MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=fo bash dizo.sh
+MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=fo INTERVAL=50 bash dizo.sh
 ```
 
 Zeroth-order optimization is sensitive to the choice of hyperparameters. Our recommended newly introduced hyperparameter search range are as follows. Empirically, more aggresive projection is better for smaller model and easier tasks, and vise versa.
