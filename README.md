@@ -69,4 +69,4 @@ Zeroth-order optimization is sensitive to the choice of hyperparameters. Our rec
 | step_size_projection             | 2.0/1.0  |
 | clip_range             | 0.1/0.2/0.3  |
 
-We have provided two additional log files ([DiZO](https://github.com/Skilteee/DiZO/blob/main/output-DiZO-SST2.log) and [MeZO](https://github.com/Skilteee/DiZO/blob/main/output-MeZO-SST2.log) on SST2) to verify that your code is running correctly. Results may vary slightly on different devices.
+We have provided two additional log files ([DiZO](https://github.com/Skilteee/DiZO/blob/main/output-DiZO-SST2.log) and [MeZO](https://github.com/Skilteee/DiZO/blob/main/output-MeZO-SST2.log) on SST2) to verify that your code is running correctly. The exact numbers may vary slightly depending on the specific devices.
