@@ -60,7 +60,7 @@ MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=z
 MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=fo bash dizo.sh
 ```
 
-Our recommended hyperparameter search range are as follows. Empirically, more aggresive projection is better for smaller model and easier tasks, and vise versa.
+Zeroth-order optimization is sensitive to the choice of hyperparameters. Our recommended newly introduced hyperparameter search range are as follows. Empirically, more aggresive projection is better for smaller model and easier tasks, and vise versa.
 
 | DiZO methods     | Suggested Value         |
 |------------------|------------|
@@ -68,3 +68,5 @@ Our recommended hyperparameter search range are as follows. Empirically, more ag
 | zo_eps_projection    | 0.1/0.05  |
 | step_size_projection             | 2.0/1.0  |
 | clip_range             | 0.1/0.2/0.3  |
+
+We have provided two additional log files ([DiZO](https://github.com/Skilteee/DiZO/blob/main/output-DiZO-SST2.log) and [MeZO](https://github.com/Skilteee/DiZO/blob/main/output-MeZO-SST2.log) on SST2) to verify that your code is running correctly. Results may vary slightly on different devices.
