@@ -8,7 +8,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-Use `run.py` for all functions (zero-shot/ICL/fine-tuning/MeZO):
+Use `run.py` for all functions (zero-shot/ICL/fine-tuning/MeZO/DiZO):
 
 ```bash
 python run.py {ARGUMENTS}
