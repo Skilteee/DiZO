@@ -44,7 +44,7 @@ The second part is the new introduced arguments in DiZO.
 
 * ```--zo_eps_projection```: ZO hyperparameter epsilon for projection update.
 
-* ```--lr_projection```: learning rate for projection.
+* ```--step_size_projection```: step size for projection.
 
 * ```--clip_range```: $\tau$ for projection clipping.
 
@@ -59,3 +59,12 @@ MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=z
 # use first-order optimization for $\gamma$ projection searching
 MODEL=facebook/opt-2.7b TASK=SST2 MODE=ft LR=1e-6 EPS=1e-3 STEPS=4000 ENHANCED=fo bash dizo.sh
 ```
+
+Our recommended hyperparameter search range are as follows. Empirically, more aggresive projection is better for smaller model and easier tasks, and vise versa.
+
+| DiZO methods     | Suggested Value         |
+|------------------|------------|
+| interval   | 50/100/200/400  |
+| zo_eps_projection    | 0.1/0.05  |
+| step_size_projection             | 2.0/1.0  |
+| clip_range             | 0.1/0.2/0.3  |
