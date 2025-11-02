@@ -40,7 +40,7 @@ The second part is the new introduced arguments in DiZO.
 
 * ```--enhanced ```: wheather involving projection (DiZO) into ZO training, need to set ```--trainer=zo```
 
-* ```--update_intervals```: training step interval to update the projection ($\kappa$).
+* ```--interval```: training step interval to update the projection ($\kappa$).
 
 * ```--zo_eps_projection```: ZO hyperparameter epsilon for projection update.
 
