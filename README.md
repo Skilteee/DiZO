@@ -85,7 +85,7 @@ Please refer to ```trainer.py``` for details. The ```_inner_training_loop``` fun
 
 ## Acknowledgement
 
-Thanks to [MeZO](https://github.com/princeton-nlp/MeZO) (Memory-efficient Zeroth-order Optimization) open source their code with detailed Readme, you may find solution in MeZO's repo if there is any bugs in runing DiZO. 
+Thanks to [MeZO](https://github.com/princeton-nlp/MeZO) (Memory-efficient Zeroth-order Optimization) open source their code with detailed Readme, you may try to find solution in MeZO's repo if there is any bugs in runing DiZO. 
 
 ## Citation
 
