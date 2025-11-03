@@ -1,4 +1,4 @@
-Please cd ./large_models first.
+# Harmony in Divergence: Towards Fast, Accurate, and Memory-efficient Zeroth-order LLM Fine-tuning
 
 ## Installation
 
@@ -7,6 +7,8 @@ pip install -r requirements.txt
 ```
 
 ## Usage
+
+cd to ```./large_models``` first.
 
 Use `run.py` for all functions (zero-shot/ICL/fine-tuning/MeZO/DiZO):
 
