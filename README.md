@@ -1,5 +1,7 @@
 # Harmony in Divergence: Towards Fast, Accurate, and Memory-efficient Zeroth-order LLM Fine-tuning
 
+Implementation of Neurips 2025 paper [DiZO](https://arxiv.org/abs/2502.03304).
+
 ## Installation
 
 ```
